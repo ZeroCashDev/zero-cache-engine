@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zero-Cache Engine v24v</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:rgb(128,128,128);font-family:'Courier New',monospace;color:#1a1a1a;padding:8px;max-width:800px;margin:0 auto}
+#canvas-wrap{margin-bottom:6px}
+canvas{display:block;background:#000;width:100%;height:200px;cursor:crosshair}
+#hud{font-size:13px;padding:4px 0 6px;border-bottom:1px solid #999;margin-bottom:6px}
+#log{font-size:13px;line-height:1.4;min-height:120px;max-height:120px;overflow:hidden;margin-bottom:6px}
+.log-entry{padding:1px 0;border-bottom:1px dotted #aaa}
+#controls{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
+button{background:#555;color:#ddd;border:1px solid #777;padding:6px 12px;font-family:'Courier New',monospace;font-size:13px;cursor:pointer;border-radius:2px}
+button:hover{background:#666}
+button:disabled{background:#444;color:#888;cursor:default}
+#input-row{display:flex;gap:4px}
+#txt-input{flex:1;background:#777;color:#fff;border:1px solid #999;padding:6px;font-family:'Courier New',monospace;font-size:13px}
+#start-screen{padding:20px 0}
+#start-screen h2{margin-bottom:10px}
+#start-screen p{margin-bottom:8px;font-size:13px}
+input[type=number]{background:#777;color:#fff;border:1px solid #999;padding:6px;font-family:'Courier New',monospace;font-size:14px;width:80px}
+.disclaimer{color:#622;font-weight:bold;font-size:12px;margin:10px 0}
+.hint{font-size:11px;color:#666;margin-top:4px}
+</style></head><body>
+<div id="start-screen">
+<h2>Zero-Cache Engine — Визуальный</h2>
+<p>Лабиринт отражений. Кэш чист. Памяти нет.</p>
+<p class="disclaimer">Детям играть категорически запрещено. Опасно для жизни.</p>
+<p>Рост (см): <input type="number" id="h-input" value="170" min="140" max="220"></p>
+<p>Вес (кг): <input type="number" id="w-input" value="60" min="35" max="200"></p>
+<button onclick="startGame()">ВОЙТИ</button>
+<p class="hint">Мышь — осмотр. ПКМ — вперёд. Пробел — назад. Б(,) — влево. Ю(.) — вправо. Кнопки внизу — действия.</p>
+</div>
+<div id="game" style="display:none">
+<div id="canvas-wrap"><canvas id="cv" width="320" height="200"></canvas></div>
+<div id="hud"></div>
+<div id="log"></div>
+<div id="controls"></div>
+<div id="input-row"><input type="text" id="txt-input" placeholder="команда..." onkeydown="if(event.key==='Enter')parseInput()"><button onclick="parseInput()">OK</button></div>
+</div>
+<script>
+var S={hp:100,xp:0,h:170,w:60,bmi:0,loc:null,locId:0,restPoint:null,locCount:0,used:{},architect:null,paths:[],
+px:1.5,py:1.5,pa:0,MAP:[]};
+var locTypes=['Крыша','Подъезд','Подвал','Чердак','Техэтаж','Стык','Стройка','Двор','Переулок','Лестничная клетка','Шахта','ТЦ'];
+var locPrefixes=['Серый','Тёмный','Глухой','Ржавый','Древний','Пустой','Холодный','Забытый','Ветхий','Сырой','Чёрный','Мёртвый'];
+var locSuffixes=['флигель','корпус','блок','ярус','пролёт','секция','уровень','крыло','тоннель','отсек','зал','проход'];
+var usedNames={};
+
+function uid(){return Date.now().toString(36)+Math.random().toString(36).substr(2,6)}
+function genName(){var n;do{n=locPrefixes[Math.floor(Math.random()*locPrefixes.length)]+' '+locSuffixes[Math.floor(Math.random()*locSuffixes.length)]+' '+Math.floor(Math.random()*900+100);}while(usedNames[n]);usedNames[n]=1;return n;}
+function bmiCalc(){return S.w/((S.h/100)*(S.h/100))}
+function weightClass(){var b=bmiCalc();if(b<18)return'худой';if(b<25)return'эталон';if(b<30)return'тяжёлый';return'тучный'}
+function architectHere(id){var h=0,s=id+'';for(var i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;return((h>>>0)%5===0);}
+var archPhrases=['Ты искал меня. Я здесь.','Выход там же, где вход. Только с другой стороны.','Лабиринт не кончается. Он меняется.','Ты уже был здесь. Просто не помнишь.','Кэш чист. Памяти нет. Это не баг.','Физика решает. Не ты.','Тяжёлый не прыгнет. Лёгкий не удержит. Эталон проходит.','Отдых — не пауза. Отдых — точка возврата.','Я не в конце. Я везде.','Ты не играешь в лабиринт. Лабиринт играет тобой.'];
+
+// Raycasting
+var cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+var MAPS=16;
+
+function genMap(){
+  var m=[];
+  for(var y=0;y<MAPS;y++){m[y]=[];for(var x=0;x<MAPS;x++){m[y][x]=(x===0||y===0||x===MAPS-1||y===MAPS-1)?1:0;}}
+  // Random pillars
+  for(var i=0;i<20;i++){
+    var rx=Math.floor(Math.random()*(MAPS-2))+1,ry=Math.floor(Math.random()*(MAPS-2))+1;
+    if(!(rx<3&&ry<3))m[ry][rx]=1;
+  }
+  // Ensure exit path
+  var ex=MAPS-2,ey=MAPS-2;m[ey][ex]=2; // exit (red)
+  // Architect spot
+  if(S.architect){var ax=Math.floor(Math.random()*(MAPS-4))+2,ay=Math.floor(Math.random()*(MAPS-4))+2;m[ay][ax]=3;}
+  return m;
+}
+
+function castRay(map,px,py,angle){
+  var dx=Math.cos(angle),dy=Math.sin(angle);
+  var step=0.02,dist=0;
+  while(dist<12){
+    dist+=step;
+    var tx=Math.floor(px+dx*dist),ty=Math.floor(py+dy*dist);
+    if(tx<0||tx>=MAPS||ty<0||ty>=MAPS)return{dist:12,type:0};
+    if(map[ty][tx]>0)return{dist:dist,type:map[ty][tx]};
+  }
+  return{dist:12,type:0};
+}
+
+function render(){
+  if(!S.MAP.length)return;
+  var w=cv.width,h=cv.height;
+  ctx.fillStyle='#000';ctx.fillRect(0,0,w,h);
+  // Floor
+  ctx.fillStyle='#1a1a1a';ctx.fillRect(0,h/2,w,h/2);
+  // Ceiling
+  ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,w,h/2);
+  
+  var fov=Math.PI/3;
+  var numRays=80;
+  for(var i=0;i<numRays;i++){
+    var angle=S.pa-fov/2+(i/numRays)*fov;
+    var ray=castRay(S.MAP,S.px,S.py,angle);
+    var corrDist=ray.dist*Math.cos(angle-S.pa);
+    if(corrDist<0.01)corrDist=0.01;
+    var lineH=Math.min(h,(h/corrDist));
+    var x=i*(w/numRays);
+    var colW=Math.ceil(w/numRays)+1;
+    
+    // Color by type + distance fog
+    var r,g,b;
+    if(ray.type===2){r=140;g=30;b=30;} // exit red
+    else if(ray.type===3){r=60;g=80;b=120;} // architect
+    else{r=80;g=80;b=80;} // wall gray
+    
+    // Fog
+    var fog=Math.max(0,1-corrDist/8);
+    r=Math.floor(r*fog);g=Math.floor(g*fog);b=Math.floor(b*fog);
+    
+    // Damage tint
+    if(S.hp<30){r+=30;}
+    
+    ctx.fillStyle='rgb('+r+','+g+','+b+')';
+    ctx.fillRect(x,h/2-lineH/2,colW,lineH);
+  }
+  // Vignette
+  var grad=ctx.createRadialGradient(w/2,h/2,50,w/2,h/2,w/2);
+  grad.addColorStop(0,'rgba(0,0,0,0)');
+  grad.addColorStop(1,'rgba(0,0,0,0.6)');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,w,h);
+}
+
+function genLoc(){
+  var type=locTypes[Math.floor(Math.random()*locTypes.length)];
+  var name=genName();
+  var floor=Math.floor(Math.random()*12)-2;if(floor<0)floor=0;
+  S.locId=uid();
+  S.loc={type:type,name:name,floor:floor};
+  S.locCount++;S.used={};
+  S.architect=architectHere(S.locId)?archPhrases[Math.floor(Math.random()*archPhrases.length)]:null;
+  S.MAP=genMap();
+  S.px=1.5;S.py=1.5;S.pa=0;
+  
+  var paths=[{id:'forward',label:'Вперёд'}];
+  if(['Подъезд','Двор','Переулок','ТЦ','Стройка'].includes(type))paths.push({id:'domofon',label:'Домофон'});
+  if(['Подъезд','ТЦ','Стройка','Техэтаж'].includes(type)&&floor>=0)paths.push({id:'lift',label:'Лифт'});
+  if(['Подъезд','Чердак','Техэтаж','Лестничная клетка','Шахта','Стройка'].includes(type))paths.push({id:'stairs',label:'Лестница'});
+  if(floor>=3||['Крыша','Чердак','Стык','Техэтаж'].includes(type))paths.push({id:'roof',label:'На крышу'});
+  paths.push({id:'rest',label:'Отдых'});
+  if(type==='Крыша'||type==='Стык')paths.push({id:'jump',label:'Прыжок'});
+  while(paths.length<5)paths.push({id:'forward'+paths.length,label:'Вперёд (другой)'});
+  S.paths=paths;
+  
+  var hazards=['Труба течёт ржавой водой. Можно пить.','На подоконнике сладкое. Кто-то забыл.','Ветер сбивает с ног.','Тишина. Слишком тихо.','Запах гари.','Скрип металла.','Холодно.'];
+  S.hazard=hazards[Math.floor(Math.random()*hazards.length)];
+  
+  addLog('— '+name+' — '+type+' — Этаж '+floor+' —');
+  if(S.architect){addLog('У стены сидит человек. Архитектор.');addLog('"'+S.architect+'"');S.xp+=50;addLog('+50 опыта.');}
+  addLog(S.hazard);
+  updateHUD();renderControls();render();
+}
+
+function doPath(id){
+  if(S.used[id]){addLog('Уже сделано. Пути назад нет.');return;}
+  S.used[id]=1;
+  switch(id){
+    case'forward':addLog('Двигаешься вперёд. Локация стирается.');eraseLoc();genLoc();break;
+    case'domofon':handleDomofon();break;
+    case'lift':handleLift();break;
+    case'stairs':handleStairs();break;
+    case'roof':handleRoof();break;
+    case'jump':handleJump();break;
+    case'rest':handleRest();break;
+    default:addLog('Другой путь.');eraseLoc();genLoc();
+  }
+  checkDeath();
+  render();
+}
+
+function handleDomofon(){
+  addLog('Домофон. Кнопки стёрты.');
+  var wc=weightClass();
+  if(wc==='тучный'){addLog('Не дотянуться. Уходишь.');return;}
+  if(S.xp>500){addLog('Код известен. Дверь открыта.');S.xp+=15;addLog('+15 опыта.');eraseLoc();genLoc();}
+  else{var code=Math.floor(Math.random()*900+100);addLog('Набираешь '+code+'.');if(code%2===0){addLog('Щёлк. Другой подъезд.');S.xp+=20;addLog('+20 опыта.');eraseLoc();genLoc();}else{addLog('Молчание. Голос: "Кто?"');S.xp+=10;addLog('+10 опыта.');}}
+}
+function handleLift(){
+  if(S.loc.floor<=0){addLog('Лифт не ходит ниже.');return;}
+  var o=S.loc.floor%3;
+  if(o===0){addLog('Едет. Другой этаж.');S.xp+=15;addLog('+15 опыта.');eraseLoc();genLoc();}
+  else if(o===1){addLog('Застрял. Вышибаешь дверь.');var d=Math.floor(S.w*0.1);S.hp-=d;addLog('-'+d+' урона. Но выбрался.');S.xp+=25;addLog('+25 опыта.');eraseLoc();genLoc();}
+  else{addLog('Едет не туда. Другой подъезд.');S.xp+=10;addLog('+10 опыта.');eraseLoc();genLoc();}
+}
+function handleStairs(){
+  var up=S.loc.floor<5;addLog(up?'Вверх.':'Вниз.');
+  if(S.loc.floor%2===0){addLog('Новый этаж.');S.xp+=5;addLog('+5 опыта.');eraseLoc();genLoc();}
+  else{addLog('Тупик. Замок сварен.');S.xp+=3;addLog('+3 опыта.');eraseLoc();genLoc();}
+}
+function handleRoof(){
+  var wc=weightClass();
+  if(wc==='тучный'){addLog('Не подняться. Физика.');return;}
+  addLog('Крыша. Воздух. Ветер.');S.xp+=10;addLog('+10 опыта.');
+  eraseLoc();S.loc={type:'Крыша',name:genName(),floor:Math.floor(Math.random()*4+5)};
+  S.locCount++;S.used={};S.architect=architectHere(S.locId=uid())?archPhrases[Math.floor(Math.random()*archPhrases.length)]:null;
+  S.MAP=genMap();S.px=1.5;S.py=1.5;S.pa=0;
+  S.paths=[{id:'forward',label:'Вперёд'},{id:'jump',label:'Прыжок'},{id:'rest',label:'Отдых'},{id:'forward2',label:'Спуск'},{id:'forward3',label:'Другой путь'}];
+  addLog('— '+S.loc.name+' — Крыша — Этаж '+S.loc.floor+' —');
+  if(S.architect){addLog('Архитектор: "'+S.architect+'"');S.xp+=50;addLog('+50 опыта.');}
+  addLog(['Город внизу.','Ветер рвёт.','Край. Внизу — кусты.','Антенна скрипит.'][Math.floor(Math.random()*4)]);
+  updateHUD();renderControls();render();
+}
+function handleJump(){
+  var wc=weightClass();
+  if(wc==='тучный'){addLog('Не прыгнуть. Вес.');return;}
+  if(wc==='тяжёлый'){addLog('Прыжок. Ветки хрустят. Удар жёсткий.');var d=Math.floor(S.w*0.8);S.hp-=d;addLog('-'+d+' урона. Перекат не гасит. Но жив.');S.xp+=30+d;addLog('+'+(30+d)+' опыта.');eraseLoc();genLoc();}
+  else{addLog('Разбег. Прыжок. Кусты. Перекат. Удар гаснет.');var d=Math.floor(S.w*0.3);if(d>0)S.hp-=d;if(d>0)addLog('-'+d+' урона.');else addLog('Без урона.');S.xp+=25;addLog('+25 опыта.');eraseLoc();genLoc();}
+}
+function handleRest(){S.restPoint={hp:S.hp,xp:S.xp};S.hp=Math.min(100,S.hp+20);addLog('Отдых. +20 HP. Точка возврата.');S.xp+=5;addLog('+5 опыта.');updateHUD();renderControls();}
+function eraseLoc(){S.loc=null;S.paths=[];S.MAP=[];}
+
+function addLog(txt){var l=document.getElementById('log');var e=document.createElement('div');e.className='log-entry';e.textContent=txt;l.appendChild(e);var es=l.querySelectorAll('.log-entry');if(es.length>8){for(var i=0;i<es.length-8;i++)es[i].remove();}l.scrollTop=l.scrollHeight;}
+function updateHUD(){document.getElementById('hud').innerHTML='HP:'+S.hp+' | Опыт:'+S.xp+' | #'+S.locCount+' | '+weightClass();}
+function renderControls(){var c=document.getElementById('controls');c.innerHTML='';S.paths.forEach(function(p){var b=document.createElement('button');b.textContent=p.label;b.onclick=function(){doPath(p.id)};if(S.used[p.id])b.disabled=true;c.appendChild(b);});}
+function parseInput(){var inp=document.getElementById('txt-input');var v=inp.value.toLowerCase().trim();inp.value='';if(!v)return;var f=false;S.paths.forEach(function(p){if(p.label.toLowerCase().includes(v)||v.includes(p.id)){doPath(p.id);f=true;}});if(!f){if(v.includes('отдых'))doPath('rest');else if(v.includes('прыг')){S.paths.forEach(function(p){if(p.id==='jump')doPath('jump');});}else if(v.includes('крыш')){S.paths.forEach(function(p){if(p.id==='roof')doPath('roof');});}else if(v.includes('домофон')){S.paths.forEach(function(p){if(p.id==='domofon')doPath('domofon');});}else if(v.includes('лифт')){S.paths.forEach(function(p){if(p.id==='lift')doPath('lift');});}else if(v.includes('лест')){S.paths.forEach(function(p){if(p.id==='stairs')doPath('stairs');});}else if(v.includes('вперёд')||v.includes('идти')||v.includes('дальше'))doPath('forward');else addLog('Не понял.');}}
+function checkDeath(){if(S.hp<=0){if(S.restPoint){addLog('Вырубилось электричество. Очнулся.');S.hp=S.restPoint.hp+20;S.xp=S.restPoint.xp;genLoc();}else{addLog('Тьма. Нет точки возврата.');document.getElementById('controls').innerHTML='<button onclick="location.reload()">Заново</button>';}return true;}return false;}
+
+// Controls: mouse look + movement
+var keys={};
+document.addEventListener('keydown',function(e){keys[e.key.toLowerCase()]=true;});
+document.addEventListener('keyup',function(e){keys[e.key.toLowerCase()]=false;});
+cv.addEventListener('click',function(){cv.requestPointerLock();});
+document.addEventListener('mousemove',function(e){if(document.pointerLockElement===cv){S.pa+=e.movementX*0.002;render();}});
+cv.addEventListener('contextmenu',function(e){e.preventDefault();});
+document.addEventListener('mousedown',function(e){if(e.button===2)keys['rmb']=true;});
+document.addEventListener('mouseup',function(e){if(e.button===2)keys['rmb']=false;});
+
+function gameLoop(){
+  if(S.MAP.length){
+    var moved=false;
+    if(keys['rmb']||keys['arrowup']||keys['w']){movePlayer(0.06,0);moved=true;}
+    if(keys[' ']||keys['arrowdown']||keys['s']){movePlayer(-0.06,0);moved=true;}
+    if(keys[',']||keys['б']||keys['arrowleft']){movePlayer(0,-0.06);moved=true;}
+    if(keys['.']||keys['ю']||keys['arrowright']){movePlayer(0,0.06);moved=true;}
+    if(keys['a']){movePlayer(-0.06,0);moved=true;} // strafe
+    if(keys['d']){movePlayer(0,0.06);moved=true;}
+    if(moved)render();
+  }
+  requestAnimationFrame(gameLoop);
+}
+
+function movePlayer(forward,strafe){
+  var nx=S.px+Math.cos(S.pa)*forward+Math.cos(S.pa+Math.PI/2)*strafe;
+  var ny=S.py+Math.sin(S.pa)*forward+Math.sin(S.pa+Math.PI/2)*strafe;
+  // Collision
+  var tx=Math.floor(nx),ty=Math.floor(ny);
+  if(tx>=0&&tx<MAPS&&ty>=0&&ty<MAPS&&S.MAP[ty][tx]===0){S.px=nx;S.py=ny;}
+  else{
+    // Try one axis
+    var tx2=Math.floor(nx),ty2=Math.floor(S.py);
+    if(tx2>=0&&tx2<MAPS&&ty2>=0&&ty2<MAPS&&S.MAP[ty2][tx2]===0){S.px=nx;}
+    var tx3=Math.floor(S.px),ty3=Math.floor(ny);
+    if(tx3>=0&&tx3<MAPS&&ty3>=0&&ty3<MAPS&&S.MAP[ty3][tx3]===0){S.py=ny;}
+  }
+}
+
+function startGame(){
+  S.h=parseInt(document.getElementById('h-input').value)||170;
+  S.w=parseInt(document.getElementById('w-input').value)||60;
+  S.bmi=bmiCalc();
+  document.getElementById('start-screen').style.display='none';
+  document.getElementById('game').style.display='block';
+  addLog('Вход. '+S.h+'/'+S.w+' — '+weightClass());
+  addLog('Лабиринт отражений. Кэш чист.');
+  genLoc();
+  gameLoop();
+}
+</script></body></html>

@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zero-Cache Engine v24t</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:rgb(128,128,128);font-family:'Courier New',monospace;color:#1a1a1a;padding:8px;max-width:640px;margin:0 auto}
+#hud{font-size:13px;padding:4px 0 6px;border-bottom:1px solid #999;margin-bottom:6px}
+#log{font-size:13px;line-height:1.5;min-height:320px;max-height:320px;overflow:hidden;margin-bottom:6px}
+.log-entry{padding:2px 0;border-bottom:1px dotted #aaa}
+#controls{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
+button{background:#555;color:#ddd;border:1px solid #777;padding:6px 12px;font-family:'Courier New',monospace;font-size:13px;cursor:pointer;border-radius:2px}
+button:hover{background:#666}
+button:disabled{background:#444;color:#888;cursor:default}
+#input-row{display:flex;gap:4px}
+#txt-input{flex:1;background:#777;color:#fff;border:1px solid #999;padding:6px;font-family:'Courier New',monospace;font-size:13px}
+#start-screen{padding:20px 0}
+#start-screen h2{margin-bottom:10px}
+#start-screen p{margin-bottom:8px;font-size:13px}
+input[type=number]{background:#777;color:#fff;border:1px solid #999;padding:6px;font-family:'Courier New',monospace;font-size:14px;width:80px}
+.disclaimer{color:#622;font-weight:bold;font-size:12px;margin:10px 0}
+</style></head><body>
+<div id="start-screen">
+<h2>Zero-Cache Engine</h2>
+<p>Лабиринт отражений. Кэш чист. Памяти нет.</p>
+<p class="disclaimer">Детям играть категорически запрещено. Опасно для жизни.</p>
+<p>Рост (см): <input type="number" id="h-input" value="170" min="140" max="220"></p>
+<p>Вес (кг): <input type="number" id="w-input" value="60" min="35" max="200"></p>
+<button onclick="startGame()">ВОЙТИ</button>
+</div>
+<div id="game" style="display:none">
+<div id="hud"></div>
+<div id="log"></div>
+<div id="controls"></div>
+<div id="input-row"><input type="text" id="txt-input" placeholder="команда..." onkeydown="if(event.key==='Enter')parseInput()"><button onclick="parseInput()">OK</button></div>
+</div>
+<script>
+var S={hp:100,xp:0,h:170,w:60,bmi:0,loc:null,locId:0,restPoint:null,locCount:0,used:{},architect:null,paths:[]};
+var locTypes=['Крыша','Подъезд','Подвал','Чердак','Техэтаж','Стык','Стройка','Двор','Переулок','Лестничная клетка','Шахта','ТЦ'];
+var locPrefixes=['Серый','Тёмный','Глухой','Ржавый','Древний','Пустой','Холодный','Забытый','Ветхий','Сырой','Чёрный','Мёртвый'];
+var locSuffixes=['флигель','корпус','блок','ярус','пролёт','секция','уровень','крыло','тоннель','отсек','зал','проход'];
+var usedNames={};
+
+function uid(){return Date.now().toString(36)+Math.random().toString(36).substr(2,6)}
+
+function genName(){
+  var n;
+  do{n=locPrefixes[Math.floor(Math.random()*locPrefixes.length)]+' '+locSuffixes[Math.floor(Math.random()*locSuffixes.length)]+' '+Math.floor(Math.random()*900+100);}while(usedNames[n]);usedNames[n]=1;return n;
+}
+
+function bmiCalc(){return S.w/((S.h/100)*(S.h/100))}
+
+function weightClass(){var b=bmiCalc();if(b<18)return'худой';if(b<25)return'эталон';if(b<30)return'тяжёлый';return'тучный'}
+
+// Quantum architect: superposition collapses on location entry
+// Uses hash of location ID - deterministic but unpredictable
+function architectHere(id){
+  var h=0;var s=id+'';for(var i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;
+  return ((h>>>0)%5===0); // ~20% but NOT random - quantum
+}
+
+var archPhrases=['Ты искал меня. Я здесь.','Выход там же, где вход. Только с другой стороны.','Лабиринт не кончается. Он меняется.','Ты уже был здесь. Просто не помнишь.','Кэш чист. Памяти нет. Это не баг.','Физика решает. Не ты.','Тяжёлый не прыгнет. Лёгкий не удержит. Эталон проходит.','Отдых — не пауза. Отдых — точка возврата.','Я не в конце. Я везде.','Ты не играешь в лабиринт. Лабиринт играет тобой.'];
+
+function genLoc(){
+  var type=locTypes[Math.floor(Math.random()*locTypes.length)];
+  var name=genName();
+  var floor=Math.floor(Math.random()*12)-2; // -2 to 9
+  if(floor<0)floor=0;
+  S.locId=uid();
+  S.loc={type:type,name:name,floor:floor};
+  S.locCount++;
+  S.used={};
+  
+  // Quantum: architect superposition collapses
+  S.architect=architectHere(S.locId)?archPhrases[Math.floor(Math.random()*archPhrases.length)]:null;
+  
+  // Generate paths - minimum 5, context-dependent
+  var paths=[];
+  // Always: forward
+  paths.push({id:'forward',label:'Вперёд'});
+  // Domofon: only in подъезд, двор, переулок
+  if(['Подъезд','Двор','Переулок','ТЦ','Стройка'].includes(type))paths.push({id:'domofon',label:'Домофон'});
+  // Lift: in buildings with floors > 2
+  if(['Подъезд','ТЦ','Стройка','Техэтаж'].includes(type)&&floor>=0)paths.push({id:'lift',label:'Лифт'});
+  // Stairs: in buildings
+  if(['Подъезд','Чердак','Техэтаж','Лестничная клетка','Шахта','Стройка'].includes(type))paths.push({id:'stairs',label:'Лестница'});
+  // Roof: if floor >= 3 or type is крыша/чердак/стык
+  if(floor>=3||['Крыша','Чердак','Стык','Техэтаж'].includes(type))paths.push({id:'roof',label:'На крышу'});
+  // Rest: always available
+  paths.push({id:'rest',label:'Отдых'});
+  // If on roof, add jump
+  if(type==='Крыша'||type==='Стык')paths.push({id:'jump',label:'Прыжок'});
+  
+  // Ensure at least 5
+  while(paths.length<5){
+    paths.push({id:'forward'+paths.length,label:'Вперёд (другой путь)'});
+  }
+  S.paths=paths;
+  
+  // Environmental hazard - NOT random percentage, context-based
+  var hazards=['Труба течёт ржавой водой. Можно пить.','На подоконнике сладкое. Кто-то забыл.','Ветер сбивает с ног. Гудит в ушах.','Тишина. Слишком тихо.','Запах гари. Где-то горит.','Скрип. Металл по металлу.','Лужа. Масляная плёнка на воде.','Холодно. Куртка бы не помешала.'];
+  var haz=hazards[Math.floor(Math.random()*hazards.length)];
+  
+  S.hazard=haz;
+  
+  addLog('— '+name+' — '+type+' — Этаж '+floor+' —');
+  if(S.architect){
+    addLog('У стены сидит человек. Архитектор.');
+    addLog('"'+S.architect+'"');
+    S.xp+=50;
+    addLog('+50 опыта. Встреча.');
+  }
+  addLog(haz);
+  updateHUD();
+  renderControls();
+}
+
+function doPath(id){
+  if(S.used[id]){addLog('Уже сделано. Пути назад нет.');return;}
+  S.used[id]=1;
+  
+  switch(id){
+    case'forward':
+      addLog('Двигаешься вперёд. Локация стирается за спиной.');
+      eraseLoc();genLoc();
+      break;
+    case'domofon':
+      handleDomofon();
+      break;
+    case'lift':
+      handleLift();
+      break;
+    case'stairs':
+      handleStairs();
+      break;
+    case'roof':
+      handleRoof();
+      break;
+    case'jump':
+      handleJump();
+      break;
+    case'rest':
+      handleRest();
+      break;
+    default:
+      addLog('Другой путь. Локация меняется.');
+      eraseLoc();genLoc();
+  }
+}
+
+function handleDomofon(){
+  addLog('Домофон. Кнопки стёрты от пальцев.');
+  var wc=weightClass();
+  if(wc==='тучный'){addLog('Не дотянуться. Корпус мешает. Уходишь.');return;}
+  // Code knowledge - not random, based on experience
+  if(S.xp>500){
+    addLog('Код известен. Щёлк. Дверь открыта.');
+    S.xp+=15;
+    addLog('+15 опыта. Новый подъезд.');
+    eraseLoc();genLoc();
+  }else{
+    addLog('Код не известен. Подбираешь...');
+    // Simple: try a few codes
+    var code=Math.floor(Math.random()*900+100);
+    addLog('Набираешь '+code+'.');
+    if(code%2===0){
+      addLog('Щёлк. Открыто. Внутри — другой подъезд.');
+      S.xp+=20;
+      addLog('+20 опыта.');
+      eraseLoc();genLoc();
+    }else{
+      addLog('Молчание. Голос из динамика: "Кто?"');
+      S.xp+=10;
+      addLog('+10 опыта. Уходишь.');
+    }
+  }
+}
+
+function handleLift(){
+  addLog('Лифт. Кнопка светит тускло.');
+  if(S.loc.floor<=0){addLog('Лифт не ходит ниже. Закрыт.');return;}
+  // Lift behavior - not percentage, context
+  var outcome=S.loc.floor%3; // deterministic from floor
+  if(outcome===0){
+    addLog('Едет. Двери открываются — другой этаж. Другой мир.');
+    S.xp+=15;
+    addLog('+15 опыта.');
+    eraseLoc();genLoc();
+  }else if(outcome===1){
+    addLog('Лифт дёргается. Застрял между этажами.');
+    addLog('Вышибаешь дверь. Рука болит.');
+    var dmg=Math.floor(S.w*0.1);
+    S.hp-=dmg;
+    addLog('-'+dmg+' урона. Но выбрался. Опыт.');
+    S.xp+=25;
+    addLog('+25 опыта.');
+    eraseLoc();genLoc();
+  }else{
+    addLog('Едет. Но не туда. Другой подъезд.');
+    S.xp+=10;
+    addLog('+10 опыта.');
+    eraseLoc();genLoc();
+  }
+}
+
+function handleStairs(){
+  addLog('Лестница. Ступени стёрты.');
+  var up=S.loc.floor<5;
+  if(up){addLog('Вверх. Пролёт за пролётом.');}
+  else{addLog('Вниз. Темнеет.');}
+  // Context: sometimes leads somewhere, sometimes dead end
+  if(S.loc.floor%2===0){
+    addLog('Выводит на новый этаж. Дверь открыта.');
+    S.xp+=5;
+    addLog('+5 опыта.');
+    eraseLoc();genLoc();
+  }else{
+    addLog('Тупик. Дверь заперта. Замок сварен.');
+    S.xp+=3;
+    addLog('+3 опыта. Назад нельзя. Другой путь.');
+    eraseLoc();genLoc();
+  }
+}
+
+function handleRoof(){
+  var wc=weightClass();
+  if(wc==='тучный'){addLog('Не подняться. Тело не пускает. Физика.');return;}
+  if(wc==='тяжёлый'){addLog('Тяжело. Ветер сильный. Но выбрался на крышу.');}
+  else{addLog('Крыша. Ветер. Город внизу. Воздух.');}
+  S.xp+=10;
+  addLog('+10 опыта.');
+  eraseLoc();
+  // Force next location to be крыша
+  S.loc={type:'Крыша',name:genName(),floor:Math.floor(Math.random()*4+5)};
+  S.locCount++;S.used={};
+  S.architect=architectHere(S.locId=uid())?archPhrases[Math.floor(Math.random()*archPhrases.length)]:null;
+  var paths=[{id:'forward',label:'Вперёд'},{id:'jump',label:'Прыжок'},{id:'rest',label:'Отдых'},{id:'forward2',label:'Спуск'},{id:'forward3',label:'Другой путь'}];
+  S.paths=paths;
+  addLog('— '+S.loc.name+' — Крыша — Этаж '+S.loc.floor+' —');
+  if(S.architect){addLog('У стены сидит человек. Архитектор. "'+S.architect+'"');S.xp+=50;addLog('+50 опыта.');}
+  var haz=['Город внизу мигает огнями. Тысячи окон.','Ветер рвёт куртку. Холодно.','Край крыши. Внизу — кусты. Рядом — соседний дом.','Антенна скрипит. Ржавчина осыпается.'];
+  addLog(haz[Math.floor(Math.random()*haz.length)]);
+  updateHUD();renderControls();
+}
+
+function handleJump(){
+  var wc=weightClass();
+  // Physics, not random
+  if(wc==='тучный'){addLog('Не прыгнуть. Вес не позволит. Физика.');S.hp=0;addLog('Ты стоишь на краю. Но тело не твоё. Уходи.');return;}
+  if(wc==='тяжёлый'){
+    addLog('Разбег. Прыжок через проезд.');
+    addLog('Ветки хрустят. Удар жёсткий.');
+    var dmg=Math.floor(S.w*0.8);
+    S.hp-=dmg;
+    addLog('-'+dmg+' урона. Перекат не гасит. Но жив.');
+    S.xp+=30+dmg;
+    addLog('+'+(30+dmg)+' опыта. Боль — учитель.');
+    eraseLoc();genLoc();
+    return;
+  }
+  // Eталон / худой
+  addLog('Разбег. Прыжок. Время зависает.');
+  addLog('Кусты принимают. Перекат. Удар гаснет в движении.');
+  var dmg=Math.floor(S.w*0.3);
+  if(dmg>0)S.hp-=dmg;
+  if(dmg>0)addLog('-'+dmg+' урона. Перекат сработал.');
+  else addLog('Без урона. Идеальное гашение.');
+  S.xp+=25;
+  addLog('+25 опыта.');
+  eraseLoc();genLoc();
+}
+
+function handleRest(){
+  S.restPoint={loc:S.loc,hp:S.hp,xp:S.xp};
+  S.hp=Math.min(100,S.hp+20);
+  addLog('Отдых. Свет гаснет. Тишина.');
+  addLog('+20 здоровья. Точка возврата зафиксирована.');
+  S.xp+=5;
+  addLog('+5 опыта.');
+  updateHUD();
+  renderControls();
+}
+
+function eraseLoc(){S.loc=null;S.paths=[];}
+
+function addLog(txt){
+  var log=document.getElementById('log');
+  var e=document.createElement('div');
+  e.className='log-entry';
+  e.textContent=txt;
+  log.appendChild(e);
+  // Erase: keep only 8 entries
+  var entries=log.querySelectorAll('.log-entry');
+  if(entries.length>8){
+    for(var i=0;i<entries.length-8;i++)entries[i].remove();
+  }
+  log.scrollTop=log.scrollHeight;
+}
+
+function updateHUD(){
+  var wc=weightClass();
+  document.getElementById('hud').innerHTML='HP:'+S.hp+' | Опыт:'+S.xp+' | Локация #'+S.locCount+' | '+wc;
+}
+
+function renderControls(){
+  var c=document.getElementById('controls');
+  c.innerHTML='';
+  S.paths.forEach(function(p){
+    var b=document.createElement('button');
+    b.textContent=p.label;
+    b.onclick=function(){doPath(p.id)};
+    if(S.used[p.id])b.disabled=true;
+    c.appendChild(b);
+  });
+}
+
+function parseInput(){
+  var inp=document.getElementById('txt-input');
+  var v=inp.value.toLowerCase().trim();
+  inp.value='';
+  if(!v)return;
+  var found=false;
+  S.paths.forEach(function(p){
+    if(p.label.toLowerCase().includes(v)||v.includes(p.id)){doPath(p.id);found=true;}
+  });
+  if(!found){
+    if(v.includes('отдых')||v.includes('спать')){doPath('rest');found=true;}
+    else if(v.includes('прыг')||v.includes('прыжок')){S.paths.forEach(function(p){if(p.id==='jump')doPath('jump');found=true;});}
+    else if(v.includes('крыш')){S.paths.forEach(function(p){if(p.id==='roof')doPath('roof');found=true;});}
+    else if(v.includes('домофон')){S.paths.forEach(function(p){if(p.id==='domofon')doPath('domofon');found=true;});}
+    else if(v.includes('лифт')){S.paths.forEach(function(p){if(p.id==='lift')doPath('lift');found=true;});}
+    else if(v.includes('лест')){S.paths.forEach(function(p){if(p.id==='stairs')doPath('stairs');found=true;});}
+    else if(v.includes('вперёд')||v.includes('идти')||v.includes('дальше')){doPath('forward');found=true;}
+  }
+  if(!found)addLog('Не понял. Команды: '+S.paths.map(function(p){return p.label}).join(', '));
+}
+
+// Death/respawn
+function checkDeath(){
+  if(S.hp<=0){
+    if(S.restPoint){
+      addLog('Электричество вырубилось. Темнота.');
+      addLog('Очнулся там, где спал.');
+      S.hp=S.restPoint.hp+20;
+      S.loc=S.restPoint.loc;
+      S.xp=S.restPoint.xp;
+      addLog('Респаун. Точка возврата.');
+      genLoc();
+    }else{
+      addLog('Тьма. Лабиринт поглотил. Нет точки возврата.');
+      document.getElementById('controls').innerHTML='<button onclick="location.reload()">Заново</button>';
+    }
+    return true;
+  }
+  return false;
+}
+
+// Override addLog to check death
+var origAddLog=addLog;
+
+function startGame(){
+  S.h=parseInt(document.getElementById('h-input').value)||170;
+  S.w=parseInt(document.getElementById('w-input').value)||60;
+  S.bmi=bmiCalc();
+  document.getElementById('start-screen').style.display='none';
+  document.getElementById('game').style.display='block';
+  var wc=weightClass();
+  addLog('Вход. Параметры: '+S.h+'/'+S.w+' — '+wc);
+  addLog('Лабиринт отражений. Кэш чист.');
+  genLoc();
+}
+
+// Check death after each action
+var origDoPath=doPath;
+doPath=function(id){
+  origDoPath(id);
+  if(!checkDeath())updateHUD();
+};
+</script></body></html>

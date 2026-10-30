@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Лабиринт, которого нет и который есть</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap');
+  
+  * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+  
+  body {
+    background: #0a0a0a; color: #888;
+    font-family: 'JetBrains Mono', 'Courier New', monospace; line-height: 1.8;
+    min-height: 100vh; overflow-x: hidden;
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  
+  .noise {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none; z-index: 100; opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  
+  .vignette {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none; z-index: 99;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.8) 100%);
+  }
+  
+  .intro-container { max-width: 720px; margin: 0 auto; padding: 80px 24px 120px; position: relative; z-index: 1; }
+  .title-block { text-align: center; margin-bottom: 100px; }
+  .title-block h1 { font-size: 14px; font-weight: 400; color: #555; letter-spacing: 0.3em; text-transform: uppercase; margin-bottom: 24px; }
+  .title-block .subtitle { font-size: 28px; font-weight: 700; color: #ccc; line-height: 1.4; }
+  .title-block .subtitle span { color: #666; font-weight: 300; }
+  .title-block .dash { width: 60px; height: 1px; background: #333; margin: 40px auto; }
+  
+  .postulate { margin-bottom: 72px; }
+  .postulate .num { font-size: 11px; color: #333; letter-spacing: 0.2em; margin-bottom: 12px; }
+  .postulate h2 { font-size: 17px; font-weight: 700; color: #aaa; margin-bottom: 16px; }
+  .postulate p { font-size: 14px; font-weight: 300; color: #777; text-align: justify; }
+  
+  .intro-footer { text-align: center; margin-top: 120px; }
+  .intro-footer .enter {
+    display: inline-block; font-size: 13px; color: #555; border: 1px solid #222;
+    padding: 16px 48px; text-decoration: none; letter-spacing: 0.2em; text-transform: uppercase;
+    transition: all 0.6s ease; cursor: pointer;
+  }
+  .intro-footer .enter:hover { color: #ccc; border-color: #444; background: rgba(255,255,255,0.02); }
+  .intro-footer .line { width: 1px; height: 60px; background: #222; margin: 0 auto 40px; }
+  .intro-footer .sig { font-size: 11px; color: #2a2a2a; margin-top: 60px; letter-spacing: 0.1em; }
+
+  .gui-container {
+    display: none; max-width: 500px; margin: 0 auto; width: 100%; height: 95vh;
+    border: 1px solid #222222; background: #080808; position: relative; z-index: 2;
+    flex-direction: column; justify-content: space-between;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.95);
+  }
+  .header-bar {
+    border-bottom: 1px solid #1a1a1a; padding: 14px;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em;
+    display: flex; justify-content: space-between; color: #666666;
+  }
+  .header-bar strong { color: #aaaaaa; }
+  .audio-toggle { color: #ffd700; cursor: pointer; font-weight: bold; border: 1px dashed #333; padding: 2px 6px; }
+  .audio-toggle:hover { color: #ffffff; border-color: #666; }
+  .screen-log { flex-grow: 1; padding: 25px; overflow-y: auto; font-size: 14px; line-height: 1.65; color: #999999; text-align: justify; }
+  .screen-log span { color: #ffffff; font-weight: bold; }
+  .screen-log .warn { color: #882222; }
+  .screen-log .bio { color: #555555; font-size: 11px; margin-bottom: 15px; letter-spacing: 0.05em; text-transform: uppercase; }
+  .buttons-stack { border-top: 1px solid #1a1a1a; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
+  .gui-btn {
+    background: #0d0d0d; color: #888888; border: 1px solid #222222;
+    padding: 15px; cursor: pointer; font-size: 12px; font-weight: 500;
+    text-align: left; transition: all 0.2s; width: 100%; border-radius: 2px;
+    letter-spacing: 0.05em; -webkit-tap-highlight-color: transparent;
+  }
+  .gui-btn:active, .gui-btn:hover { background: #ffffff; color: #000000; border-color: #ffffff; }
+  .gui-btn span { color: #444444; margin-right: 12px; font-weight: bold; }
+  .gui-footer { text-align: center; font-size: 8px; color: #333333; padding: 8px; letter-spacing: 0.2em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+  <div class="noise"></div>
+  <div class="vignette"></div>
+
+  <!-- БЛОК ПОСТУЛАТОВ -->
+  <div id="intro-block" class="intro-container">
+    <div class="title-block">
+      <h1>Постулаты</h1>
+      <div class="subtitle">Лабиринт, которого нет<br><span>и который есть</span></div>
+      <div class="dash"></div>
+    </div>
+    
+    <div class="postulate"><div class="num">01</div><h2>Существование и не-существование одновременны</h2><p>Лабиринт существует, пока ты в нём. Вошёл — схлопнулся. Не вошёл — есть и нет. Это не вероятность. Это суперпозиция. Наблюдатель не измеряет — наблюдатель создаёт. Нет наблюдателя — нет лабиринта. Есть наблюдатель — есть локация, и она уже не та, что была до наблюдения.</p></div>
+    <div class="postulate"><div class="num">02</div><h2>Урон — событие, не величина</h2><p>Боль нельзя измерить. Касание ничтожно, последствие смертельно. Падение огромно, последствие нулевое. Масштаб события не коррелирует с масштабом последствия. Это не хаос — это мир, где причинно-следственная связь нарушена, и нарушение это не баг, а закон. Абсурд — не отсутствие логики, а логика иного порядка.</p></div>
+    <div class="postulate"><div class="num">03</div><h2>Память стирается за спиной</h2><p>Прошлое не существует. Не в метафорическом смысле — в буквальном. Обернулся — коридора нет. Это не забывание, это отсутствие. То, что было, не хранится где-то в тумане — его нет. Как квантовое состояние до измерения: не «скрыто», а «не определено». Прошлое возникает только в момент воспоминания, и тут же исчезает, потому что воспоминание — не прошлое, а новый акт создания.</p></div>
+    <div class="postulate"><div class="num">04</div><h2>Тело — единственный инструмент познания</h2><p>Не разум, не чувства — тело. Вес, рост, плотность. Тяжёлый не прыгнет. Лёгкий пролезет. Тело — фильтр реальности: не всё, что существует, существует для тебя. Твоё тело определяет, какой лабиринт тебе доступен. Это не ограничения персонажа — это онтология. Бытие определяется телесностью.</p></div>
+    <div class="postulate"><div class="num">05</div><h2>Опыт — единственная мера</h2><p>Не счастье, не успех, не прогресс. Опыт — то, что остаётся после события. Урон увеличивает опыт, потому что пережитое — больше неизжитого. Опыт не накапливается как ресурс — он есть след жизни на теле. Шрам — не метка урона, шрам — метка опыта.</p></div>
+    <div class="postulate"><div class="num">06</div><h2>Риск — не вероятность, а ставка</h2><p>Азарт — не казино. Азарт — когда ставишь не фишки, а тело. Каждый выбор — пари с небытием. Не «40% шанс» — а «либо дойдёшь, либо нет». Неизмеримость — суть риска. Если бы риск можно было измерить, он перестал бы быть риском и стал бы расчётом. Лабиринт — пространство не-расчёта.</p></div>
+    <div class="postulate"><div class="num">07</div><h2>Автор и творение — одно</h2><p>Архитектор — не персонаж. Архитектор — акт создания. Он существует, пока создаётся, и не существует, когда не создаётся. Кот Шрёдингера: жив и мёртв одновременно, пока коробка закрыта. Коробка — сам лабиринт. Открыл — схлопнулся. Но кто открывает? Тот, кто создаёт. Значит, автор открывает коробку, в которой он сам. Парадокс самонаблюдения.</p></div>
+    <div class="postulate"><div class="num">08</div><h2>Квантовая запутанность локаций</h2><p>Локации не независимы. То, что произошло в одной, влияет на то, что будет в другой, без видимой связи. Не причинность — запутанность. Измерил одну — определил другую. Прошёл через подвал — изменилась крыша, до которой ещё не дошёл. Расстояние между ними — не пространственное. Связь мгновенная, вне времени и пространства.</p></div>
+
+    <div class="intro-footer">
+      <div class="line"></div>
+      <div class="enter" id="btn-enter">Войти в лабиринт</div>
+      <div class="sig">w3c • 2026</div>
+    </div>
+  </div>
+
+  <!-- ИГРОВОЙ ИНТЕРФЕЙС -->
+  <div id="game-block" class="gui-container">
+    <div class="header-bar">
+      <div>HP: <strong id="hp-val">100</strong></div>
+      <div>EXP: <strong id="exp-val">0</strong></div>
+      <div class="audio-toggle" id="audio-btn">SOUND: ON</div>
+    </div>
+    
+    <div class="screen-log" id="log-screen">
+      <div class="bio">// ИНИЦИАЛИЗАЦИЯ СУПЕРПОЗИЦИИ...</div>
+      Вы стоите перед глухой стеной, которая возникла ровно в тот момент, когда вы решили обернуться. Пути назад больше нет, потому что нет самого «назад». Впереди тянется длинный, едва освещенный коридор, пахнущий сырым бетоном и застоявшимся временем. Локация неопределена, пока вы не сделаете первый шаг. Каждое движение меняет геометрию этого места. Шаг — это ваша единственная ставка.
+    </div>
+    
+    <div class="buttons-stack">
+      <button class="gui-btn" onclick="makeChoice(1)"><span>01</span>Сделать шаг вперед в темноту</button>
+      <button class="gui-btn" onclick="makeChoice(2)"><span>02</span>Коснуться ладонью холодной стены</button>
+      <button class="gui-btn" onclick="makeChoice(3)"><span>03</span>Прислушаться к гулу внутри своей головы</button>
+    </div>
+    
+    <div class="gui-footer">Связь мгновенная • Вне пространства</div>
+  </div>
+
+  <script>
+    let hp = 100;
+    let exp = 0;
+    let isMuted = false;
+    
+    let audioCtx = null;
+    let ambientOsc = null;
+    let ambientGain = null;
+
+    function initAudio() {
+      if (audioCtx) return;
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      
+      ambientOsc = audioCtx.createOscillator();
+      ambientGain = audioCtx.createGain();
+      
+      ambientOsc.type = 'sawtooth';
+      ambientOsc.frequency.setValueAtTime(55, audioCtx.currentTime);
+      
+      let filter = audioCtx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(120, audioCtx.currentTime);
+      
+      ambientGain.gain.setValueAtTime(isMuted ? 0 : 0.15, audioCtx.currentTime);
+      
+      ambientOsc.connect(filter);
+      filter.connect(ambientGain);
+      ambientGain.connect(audioCtx.destination);
+      
+      ambientOsc.start();
+    }
+
+    function playStepSound() {
+      if (!audioCtx || isMuted) return;
+      
+      let bufferSize = audioCtx.sampleRate * 0.12;
+      let buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      let data = buffer.getChannelData(0);
+      
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      
+      let noiseNode = audioCtx.createBufferSource();
+      noiseNode.buffer = buffer;
+      
+      let filter = audioCtx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(180, audioCtx.currentTime);
+      
+      let gainNode = audioCtx.createGain();
+      gainNode.gain.setValueAtTime(0.4, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+      
+      noiseNode.connect(filter);
+      filter.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      noiseNode.start();
+    }
+
+    document.getElementById('btn-enter').addEventListener('click', () => {
+      document.getElementById('intro-block').style.display = 'none';
+      document.getElementById('game-block').style.display = 'flex';
+      window.scrollTo(0, 0);
+      
+      initAudio();
+      playStepSound();
+    });
+
+    document.getElementById('audio-btn').addEventListener('click', () => {
+      isMuted = !isMuted;
+      document.getElementById('audio-btn').innerText = isMuted ? 'SOUND: OFF' : 'SOUND: ON';
+      document.getElementById('audio-btn').style.color = isMuted ? '#555' : '#ffd700';
+      
+      if (ambientGain) {
+        ambientGain.gain.setValueAtTime(isMuted ? 0 : 0.15, audioCtx.currentTime);
+      }
+    });
+
+    function makeChoice(type) {
+      playStepSound();
+      const screen = document.getElementById('log-screen');
+      
+      if (type === 1) {
+        hp = Math.max(0, hp - 12);
+        exp += 20;
+        screen.innerHTML = `<div class="bio">// ШАГ ВПЕРЕД // ПОСТУЛАТ 02 & 05</div>Вы делаете тяжелый шаг в темноту. Пространство перед вами сопротивляется, словно воздух стал плотным, как штора. Невидимый острый выступ ранит ваше плечо. <span class="warn">Урон — это событие. Получено -12 HP.</span> Но этот рубец оставляет след на вашей телесности. Вы чувствуете геометрию коридора лучше. <span>Получено +20 EXP.</span>\`;
+      } else if (type === 2) {
+        exp += 10;
+        screen.innerHTML = `<div class="bio">// КАСАНИЕ СТЕНЫ // ПОСТУЛАТ 04</div>Ваши пальцы ложатся на влажный бетон. Шум в ушах мгновенно прекращается. Стены лабиринта — это не границы комнат, это границы вашего собственного познания. Вы ощущаете, как структура коридора подстраивается под вес вашего тела. Лабиринт меняет очертания прямо сейчас, реагируя на тепло рук. <span>Получено +10 EXP.</span>\`;
+      } else if (type === 3) {
+        hp = Math.min(100, hp + 5);
+        screen.innerHTML = `<div class="bio">// ВНУТРЕННИЙ ГУЛ // ПОСТУЛАТ 01 & 07</div>Вы замираете и вслушиваетесь в низкочастотную вибрацию. Вы понимаете, что этот гул исходит не из коридоров, а изнутри вас. Вы — Архитектор и Наблюдатель одновременно. Пока коробка закрыта, вы и живы, и мертвы. Осознание этого парадокса возвращает контроль над вашим телом. <span style="color:#228822;">Организм стабилизируется. Восстановлено +5 HP.</span>\`;
+      }
+      
+      document.getElementById('hp-val').innerText = hp;
+      document.getElementById('exp-val').innerText = exp;
+      
+      if (hp <= 0) {
+        screen.innerHTML += `<br><br><span class="warn">🎰 ТЕЛО ИСТОЩЕНО. Ваша ставка не сыграла. Вы обернулись, и лабиринт окончательно растворился в небытии вместе с вами.</span>\`;
+        document.querySelectorAll('.gui-btn').forEach(b => b.disabled = true);
+      }
+    }
+  </script>
+</body>
+</html>
